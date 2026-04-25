@@ -1,7 +1,7 @@
 Review this function as a fuzz-target candidate.
 
 Target: {{ target.name | default("<unknown>") }}
-File: {{ target.file | default("<unknown>") }}:{{ target.line_start | default("?") }}
+File: {{ target.absolute_file | default(target.file | default("<unknown>")) }}:{{ target.line_start | default("?") }}
 Signature: {{ target.signature | default("<unknown signature>") }}
 
 Question:

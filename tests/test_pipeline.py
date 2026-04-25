@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fuzzrank.cli import main
+from fuzzrank.evidence import build_evidence_pack
 from fuzzrank.features import extract_features
 from fuzzrank.llm_review import (
     build_command_argv,
@@ -115,6 +116,17 @@ class PipelineTest(unittest.TestCase):
         )
 
         self.assertEqual(prompt, "target=parse_frame pair=True")
+
+    def test_evidence_and_prompt_include_absolute_file_path(self) -> None:
+        functions = extract_repo_functions(FIXTURE_REPO)
+        parse_frame = next(fn for fn in functions if fn.name == "parse_frame")
+        feature = extract_features(parse_frame)
+        rank = rank_function(parse_frame, feature)
+        evidence = build_evidence_pack(parse_frame, feature, rank, FIXTURE_REPO)
+        expected_path = (FIXTURE_REPO / "sample.c").resolve().as_posix()
+
+        self.assertEqual(evidence["target"]["absolute_file"], expected_path)
+        self.assertIn(expected_path, build_review_prompt(evidence))
 
     def test_invoke_llm_command_parses_cline_json_output(self) -> None:
         evidence = {

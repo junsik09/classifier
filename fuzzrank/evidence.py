@@ -22,7 +22,7 @@ def build_evidence_pack(
     rank: RankResult,
     repo: Path,
 ) -> dict[str, Any]:
-    source_path = repo / fn.file
+    source_path = (repo / fn.file).resolve()
     try:
         source_text = source_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -38,6 +38,7 @@ def build_evidence_pack(
         "target": {
             "name": fn.name,
             "file": fn.file,
+            "absolute_file": source_path.as_posix(),
             "line_start": fn.line_start,
             "signature": fn.signature,
             "return_type": fn.return_type,
