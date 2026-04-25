@@ -18,6 +18,7 @@ from fuzzrank.llm_review import (
 )
 from fuzzrank.model import RankResult
 from fuzzrank.ranker import rank_function
+from fuzzrank.repo_scan import scan_source_files, should_skip_source_file
 from fuzzrank.ts_extract import extract_file_functions, extract_repo_functions
 
 
@@ -66,6 +67,28 @@ class PipelineTest(unittest.TestCase):
 
             self.assertEqual(rows[0]["function"], "parse_frame")
             self.assertEqual(rows[0]["decision"], "high_priority")
+
+    def test_scan_excludes_test_and_mock_filenames(self) -> None:
+        files = scan_source_files(FIXTURE_REPO, {"c"})
+        names = {path.name for path in files}
+
+        self.assertIn("sample.c", names)
+        self.assertNotIn("parser_test.c", names)
+        self.assertNotIn("mock_codec.c", names)
+
+        functions = extract_repo_functions(FIXTURE_REPO, files)
+        names = {fn.name for fn in functions}
+
+        self.assertIn("parse_frame", names)
+        self.assertNotIn("parse_test_case", names)
+        self.assertNotIn("decode_mock_codec", names)
+
+    def test_test_and_mock_filename_filter_avoids_plain_substrings(self) -> None:
+        self.assertTrue(should_skip_source_file(Path("parser_test.c")))
+        self.assertTrue(should_skip_source_file(Path("mock_codec.c")))
+        self.assertTrue(should_skip_source_file(Path("TestParser.cpp")))
+        self.assertFalse(should_skip_source_file(Path("latest.c")))
+        self.assertFalse(should_skip_source_file(Path("contest.c")))
 
     def test_cline_command_template_receives_custom_prompt(self) -> None:
         evidence = {

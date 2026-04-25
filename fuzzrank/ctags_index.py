@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from .repo_scan import should_skip_source_file
+
 
 CTAGS_LANGUAGE_MAP = {
     "c": "C",
@@ -51,6 +53,9 @@ def run_ctags(repo: Path, languages: set[str] | None = None) -> tuple[list[dict]
             continue
 
         if obj.get("_type") != "tag":
+            continue
+
+        if should_skip_source_file(Path(obj.get("path") or "")):
             continue
 
         if obj.get("kind") in {"function", "prototype", "method"}:
