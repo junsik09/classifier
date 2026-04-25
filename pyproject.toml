@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fuzzrank"
+version = "0.1.0"
+description = "Rank C/C++ functions by fuzz harness suitability using explainable evidence."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "fuzzrank"}]
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+tree-sitter = ["tree-sitter", "tree-sitter-languages"]
+
+[project.scripts]
+fuzzrank = "fuzzrank.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fuzzrank*"]
+
+[tool.setuptools.package-data]
+fuzzrank = ["rules/*.yml"]

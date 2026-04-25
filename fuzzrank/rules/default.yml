@@ -1,0 +1,63 @@
+name_keywords:
+  parse: 5
+  decode: 5
+  deserialize: 5
+  unmarshal: 5
+  read: 4
+  load: 4
+  validate: 4
+  check: 3
+  scan: 3
+  lex: 3
+  tokenize: 3
+  decompress: 4
+  inflate: 4
+  unpack: 4
+
+path_keywords:
+  third_party: -2
+  vendor: -2
+  external: -2
+  test: -2
+  tests: -2
+  example: -2
+  examples: -2
+  generated: -3
+
+good_types:
+  byte_pointer:
+    patterns:
+      - "uint8_t *"
+      - "unsigned char *"
+      - "std::byte *"
+      - "byte *"
+    score: 5
+
+  string_like:
+    patterns:
+      - "char *"
+      - "std::string"
+      - "std::string_view"
+      - "llvm::StringRef"
+      - "absl::string_view"
+      - "folly::StringPiece"
+    score: 4
+
+bad_types:
+  context_like:
+    patterns:
+      - "Context"
+      - "Ctx"
+      - "Session"
+      - "Manager"
+      - "Engine"
+    penalty: -4
+
+  io_like:
+    patterns:
+      - "FILE *"
+      - "FILE*"
+      - "fstream"
+      - "ifstream"
+      - "Socket"
+    penalty: -3
