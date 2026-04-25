@@ -184,6 +184,7 @@ class PipelineTest(unittest.TestCase):
             stderr = ""
 
         with tempfile.TemporaryDirectory() as tmp:
+            progress: list[str] = []
             with patch("fuzzrank.llm_review.subprocess.run", return_value=Result()) as run:
                 reviewed = review_ranks(
                     repo=FIXTURE_REPO,
@@ -193,9 +194,15 @@ class PipelineTest(unittest.TestCase):
                     budget=10,
                     cache_dir=Path(tmp),
                     llm_command="cline -y {prompt}",
+                    progress=progress.append,
                 )
 
         self.assertEqual(run.call_count, 1)
+        self.assertEqual(len(progress), 2)
+        self.assertIn("llm review [1/1] running", progress[0])
+        self.assertIn("parse_frame", progress[0])
+        self.assertIn("llm review [1/1] done", progress[1])
+        self.assertIn("adjustment +1", progress[1])
         self.assertTrue(next(rank for rank in reviewed if rank.function_id == parse_frame.id).llm_used)
         self.assertFalse(next(rank for rank in reviewed if rank.function_id == helper.id).llm_used)
 

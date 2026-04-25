@@ -163,6 +163,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             cache_dir=out / ".cache" / "llm_reviews",
             llm_command=args.llm_command,
             prompt_template=args.llm_prompt_template,
+            progress=lambda message: print(message, file=sys.stderr),
         )
         llm_used = sum(1 for rank in reviewed if rank.llm_used)
         llm_blockers = sum(
@@ -248,6 +249,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         cache_dir=args.cache_dir,
         llm_command=args.llm_command,
         prompt_template=args.llm_prompt_template,
+        progress=lambda message: print(message, file=sys.stderr),
     )
     llm_used = sum(1 for rank in reviewed if rank.llm_used)
     llm_blockers = sum(

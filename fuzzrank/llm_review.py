@@ -6,7 +6,7 @@ import shlex
 import subprocess
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:
     from jinja2 import Environment, StrictUndefined
@@ -100,6 +100,7 @@ def review_ranks(
     cache_dir: Path,
     llm_command: str | None = None,
     prompt_template: Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> list[RankResult]:
     if budget <= 0:
         return list(ranks)
@@ -112,6 +113,8 @@ def review_ranks(
     used = 0
     cache_dir.mkdir(parents=True, exist_ok=True)
     review_ids = select_llm_review_ids(functions, features, ranks, budget)
+    review_count = 0
+    review_total = len(review_ids)
 
     for rank in ranks:
         fn = fn_by_id.get(rank.function_id)
@@ -120,10 +123,16 @@ def review_ranks(
             reviewed.append(rank)
             continue
 
+        review_count += 1
+        label = f"{fn.file}:{fn.line_start} {fn.name}"
         evidence = build_evidence_pack(fn, feature, rank, repo)
         cache_key = review_cache_key(evidence, prompt_template_hash=template_hash)
         cache_path = cache_dir / f"{cache_key}.json"
         review = load_cached_review(cache_path)
+
+        if progress:
+            state = "cached" if review is not None else "running"
+            progress(f"llm review [{review_count}/{review_total}] {state} {label}")
 
         if review is None and llm_command and used < budget:
             review = invoke_llm_command(llm_command, evidence, template_text=template_text)
@@ -134,6 +143,17 @@ def review_ranks(
         if review is None:
             reviewed.append(rank)
         else:
+            if progress and review.get("blockers"):
+                progress(
+                    f"llm review [{review_count}/{review_total}] blocker "
+                    f"{label}: {review['blockers'][0]}"
+                )
+            elif progress:
+                adjustment = int(review.get("score_adjustment", 0))
+                progress(
+                    f"llm review [{review_count}/{review_total}] done "
+                    f"{label} adjustment {adjustment:+d}"
+                )
             reviewed.append(apply_llm_review(rank, review))
 
     return reviewed
