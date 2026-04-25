@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .ctags_index import run_ctags
 from .features import extract_features, load_rules
-from .llm_review import review_ranks
+from .llm_review import DEFAULT_LLM_COMMAND, DEFAULT_PROMPT_TEMPLATE, review_ranks
 from .merge import merge_ctags_functions
 from .model import (
     feature_from_dict,
@@ -40,7 +40,16 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--use-tree-sitter", action=argparse.BooleanOptionalAction, default=True)
     scan.add_argument("--llm-review", action="store_true")
     scan.add_argument("--llm-budget", type=int, default=100)
-    scan.add_argument("--llm-command")
+    scan.add_argument(
+        "--llm-command",
+        default=DEFAULT_LLM_COMMAND,
+        help="LLM command template; use {prompt} to pass the function-specific prompt",
+    )
+    scan.add_argument(
+        "--llm-prompt-template",
+        type=Path,
+        help=f"Jinja prompt template path; default is {DEFAULT_PROMPT_TEMPLATE}",
+    )
     scan.set_defaults(func=cmd_scan)
 
     ctags = sub.add_parser("ctags", help="write ctags symbols JSONL")
@@ -76,7 +85,16 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--out", type=Path, required=True)
     review.add_argument("--budget", type=int, default=100)
     review.add_argument("--cache-dir", type=Path, default=Path(".cache/llm_reviews"))
-    review.add_argument("--llm-command")
+    review.add_argument(
+        "--llm-command",
+        default=DEFAULT_LLM_COMMAND,
+        help="LLM command template; use {prompt} to pass the function-specific prompt",
+    )
+    review.add_argument(
+        "--llm-prompt-template",
+        type=Path,
+        help=f"Jinja prompt template path; default is {DEFAULT_PROMPT_TEMPLATE}",
+    )
     review.set_defaults(func=cmd_review)
 
     export = sub.add_parser("export", help="export candidates JSONL/CSV")
@@ -128,6 +146,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             budget=args.llm_budget,
             cache_dir=out / ".cache" / "llm_reviews",
             llm_command=args.llm_command,
+            prompt_template=args.llm_prompt_template,
         )
     else:
         reviewed = ranks
@@ -190,6 +209,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         budget=args.budget,
         cache_dir=args.cache_dir,
         llm_command=args.llm_command,
+        prompt_template=args.llm_prompt_template,
     )
     write_jsonl(args.out, reviewed)
     return 0

@@ -1,0 +1,65 @@
+Review this function as a fuzz-target candidate.
+
+Target: {{ target.name | default("<unknown>") }}
+File: {{ target.file | default("<unknown>") }}:{{ target.line_start | default("?") }}
+Signature: {{ target.signature | default("<unknown signature>") }}
+
+Question:
+Is this function a good direct fuzz harness target, or should fuzzrank lower/raise
+the heuristic score?
+
+What to prefer:
+- Byte, buffer, string, or pointer + length inputs.
+- Low setup cost and deterministic behavior.
+- Parser, decoder, deserializer, validator, decompressor, scanner, lexer, or tokenizer entry points.
+- Return values that expose success/failure/status.
+
+What to penalize:
+- Complex contexts that require nontrivial init/free sequencing.
+- Live files, sockets, devices, UI, threads, locks, callbacks, databases, or external services.
+- Wrapper functions where the fuzz bytes cannot be mapped cleanly to parameters.
+- Missing signature/body evidence.
+
+Base rank:
+{{ base_rank | json_dumps }}
+
+Extracted calls:
+{{ calls | json_dumps }}
+
+Extracted features:
+{{ features | json_dumps }}
+
+Uncertainties:
+{{ uncertainties | json_dumps }}
+
+Relevant source excerpt:
+```c
+{{ body_excerpt }}
+```
+
+Full evidence JSON:
+{{ evidence_json }}
+
+Return exactly one JSON object. Do not wrap it in Markdown and do not add
+explanatory text before or after it.
+
+Allowed JSON schema:
+{
+  "decision": "high_priority | medium_priority | low_priority | exclude",
+  "score_adjustment": 0,
+  "confidence": "high | medium | low",
+  "harness_cost": "low | medium | high | unknown",
+  "input_mapping": {
+    "fuzz_bytes_parameter": "parameter name or null",
+    "fixed_parameters": {}
+  },
+  "reasons": [],
+  "blockers": [],
+  "rules_to_add": []
+}
+
+Rules:
+- score_adjustment must be an integer from -8 to 8.
+- The final score is computed by fuzzrank, not by you.
+- Keep reasons and blockers short and evidence based.
+- If uncertain, use confidence "low" and score_adjustment 0.

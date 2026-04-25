@@ -14,6 +14,12 @@ The MVP is intentionally conservative:
 
 ## Quick Start
 
+Install the package dependencies when running from a fresh checkout:
+
+```bash
+python3 -m pip install -e .
+```
+
 ```bash
 python3 -m fuzzrank scan /path/to/repo --out outputs/repo1 --languages c,cpp
 ```
@@ -30,18 +36,41 @@ Outputs:
 
 ## Optional LLM Review
 
-`fuzzrank` does not hard-code one LLM provider. Pass a command that reads one
-evidence pack from stdin and writes one JSON review to stdout:
+By default, `fuzzrank` asks Cline for ambiguous low-confidence reviews with a
+function-specific prompt rendered from Jinja:
 
 ```bash
 python3 -m fuzzrank scan /path/to/repo \
   --out outputs/repo1 \
   --llm-review \
-  --llm-budget 100 \
-  --llm-command "./review_one_function"
+  --llm-budget 100
 ```
 
-Review output must be JSON:
+The default command template is:
+
+```bash
+cline -y {prompt}
+```
+
+`{prompt}` is replaced with a rendered prompt from
+`fuzzrank/prompts/review.j2`. The Jinja context contains `target`, `features`,
+`base_rank`, `calls`, `body_excerpt`, `uncertainties`, `evidence`, and
+`evidence_json`.
+
+You can override the command template or the Jinja prompt template:
+
+```bash
+python3 -m fuzzrank scan /path/to/repo \
+  --out outputs/repo1 \
+  --llm-review \
+  --llm-command "cline -y {prompt}" \
+  --llm-prompt-template prompts/my_review.j2
+```
+
+For compatibility, if the command does not contain `{prompt}`, `fuzzrank` sends
+the evidence JSON on stdin.
+
+Review output must contain a JSON object:
 
 ```json
 {
@@ -85,5 +114,5 @@ ctags --version
 Install optional Python parsers when you want tree-sitter extraction:
 
 ```bash
-python3 -m pip install '.[tree-sitter,yaml]'
+python3 -m pip install -e '.[tree-sitter]'
 ```

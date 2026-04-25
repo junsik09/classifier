@@ -4,16 +4,25 @@ import hashlib
 import json
 import shlex
 import subprocess
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
+
+try:
+    from jinja2 import Environment, StrictUndefined
+except ModuleNotFoundError:  # pragma: no cover - exercised only without package deps
+    Environment = None  # type: ignore[assignment]
+    StrictUndefined = None  # type: ignore[assignment]
 
 from .evidence import build_evidence_pack
 from .model import FeatureRecord, FunctionRecord, RankResult
 from .ranker import decision_from_score
 
 
-PROMPT_VERSION = "fuzzrank-review-v1"
+PROMPT_VERSION = "fuzzrank-review-v3-jinja-cline"
 HEURISTIC_VERSION = "heuristic-v1"
+DEFAULT_LLM_COMMAND = "cline -y {prompt}"
+DEFAULT_PROMPT_TEMPLATE = "fuzzrank/prompts/review.j2"
 VALID_CONFIDENCE = {"high", "medium", "low"}
 VALID_HARNESS_COST = {"low", "medium", "high", "unknown"}
 
@@ -41,10 +50,12 @@ def review_cache_key(
     evidence: dict[str, Any],
     prompt_version: str = PROMPT_VERSION,
     heuristic_version: str = HEURISTIC_VERSION,
+    prompt_template_hash: str | None = None,
 ) -> str:
     payload = {
         "prompt_version": prompt_version,
         "heuristic_version": heuristic_version,
+        "prompt_template_hash": prompt_template_hash,
         "evidence": evidence,
     }
     raw = json.dumps(payload, sort_keys=True).encode("utf-8")
@@ -59,7 +70,13 @@ def review_ranks(
     budget: int,
     cache_dir: Path,
     llm_command: str | None = None,
+    prompt_template: Path | None = None,
 ) -> list[RankResult]:
+    if budget <= 0:
+        return list(ranks)
+
+    template_text = load_prompt_template(prompt_template)
+    template_hash = hashlib.sha256(template_text.encode("utf-8")).hexdigest()
     fn_by_id = {fn.id: fn for fn in functions}
     features_by_id = {feature.function_id: feature for feature in features}
     reviewed: list[RankResult] = []
@@ -86,12 +103,12 @@ def review_ranks(
             continue
 
         evidence = build_evidence_pack(fn, feature, rank, repo)
-        cache_key = review_cache_key(evidence)
+        cache_key = review_cache_key(evidence, prompt_template_hash=template_hash)
         cache_path = cache_dir / f"{cache_key}.json"
         review = load_cached_review(cache_path)
 
         if review is None and llm_command and used < budget:
-            review = invoke_llm_command(llm_command, evidence)
+            review = invoke_llm_command(llm_command, evidence, template_text=template_text)
             save_cached_review(cache_path, review)
             used += 1
 
@@ -120,15 +137,89 @@ def save_cached_review(path: Path, review: dict[str, Any]) -> None:
         f.write("\n")
 
 
-def invoke_llm_command(command: str, evidence: dict[str, Any]) -> dict[str, Any]:
-    proc = subprocess.run(
-        shlex.split(command),
-        input=json.dumps(evidence, sort_keys=True),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+def load_prompt_template(path: Path | None = None) -> str:
+    if path:
+        return path.read_text(encoding="utf-8")
+    return files("fuzzrank").joinpath("prompts/review.j2").read_text(encoding="utf-8")
+
+
+def build_review_prompt(
+    evidence: dict[str, Any],
+    template_text: str | None = None,
+) -> str:
+    if Environment is None or StrictUndefined is None:
+        raise RuntimeError(
+            "Jinja2 is required for LLM prompt rendering; install with `pip install -e .`"
+        )
+
+    template_text = template_text or load_prompt_template()
+    evidence_json = json.dumps(evidence, sort_keys=True, indent=2, ensure_ascii=False)
+    env = Environment(
+        undefined=StrictUndefined,
+        autoescape=False,
+        trim_blocks=True,
+        lstrip_blocks=True,
     )
+    env.filters["json_dumps"] = _json_dumps
+    template = env.from_string(template_text)
+    return template.render(
+        evidence=evidence,
+        evidence_json=evidence_json,
+        target=evidence.get("target", {}),
+        features=evidence.get("features", {}),
+        base_rank=evidence.get("base_rank", {}),
+        calls=evidence.get("calls", []),
+        body_excerpt=evidence.get("body_excerpt", ""),
+        uncertainties=evidence.get("uncertainties", []),
+    )
+
+
+def invoke_llm_command(
+    command: str,
+    evidence: dict[str, Any],
+    template_text: str | None = None,
+) -> dict[str, Any]:
+    try:
+        prompt = build_review_prompt(evidence, template_text=template_text)
+    except Exception as exc:
+        return {
+            "score_adjustment": 0,
+            "confidence": "low",
+            "harness_cost": "unknown",
+            "reasons": [],
+            "blockers": [str(exc)],
+        }
+
+    try:
+        argv = build_command_argv(command, prompt)
+    except ValueError as exc:
+        return {
+            "score_adjustment": 0,
+            "confidence": "low",
+            "harness_cost": "unknown",
+            "reasons": [],
+            "blockers": [str(exc)],
+        }
+    stdin_payload = None if "{prompt}" in command else json.dumps(evidence, sort_keys=True)
+
+    try:
+        proc = subprocess.run(
+            argv,
+            input=stdin_payload,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return {
+            "score_adjustment": 0,
+            "confidence": "low",
+            "harness_cost": "unknown",
+            "reasons": [],
+            "blockers": [f"LLM command not found: {exc.filename}"],
+        }
+
     if proc.returncode != 0:
         return {
             "score_adjustment": 0,
@@ -137,16 +228,53 @@ def invoke_llm_command(command: str, evidence: dict[str, Any]) -> dict[str, Any]
             "reasons": [],
             "blockers": [proc.stderr.strip() or f"LLM command exited with {proc.returncode}"],
         }
+    review = parse_review_output(proc.stdout)
+    if review is not None:
+        return validate_review(review)
+
+    return {
+        "score_adjustment": 0,
+        "confidence": "low",
+        "harness_cost": "unknown",
+        "reasons": [],
+        "blockers": ["LLM command returned no valid JSON object"],
+    }
+
+
+def build_command_argv(command: str, prompt: str) -> list[str]:
+    argv = shlex.split(command)
+    if not argv:
+        raise ValueError("empty LLM command")
+    return [part.replace("{prompt}", prompt) for part in argv]
+
+
+def parse_review_output(output: str) -> dict[str, Any] | None:
     try:
-        return validate_review(json.loads(proc.stdout))
-    except json.JSONDecodeError as exc:
-        return {
-            "score_adjustment": 0,
-            "confidence": "low",
-            "harness_cost": "unknown",
-            "reasons": [],
-            "blockers": [f"LLM command returned invalid JSON: {exc}"],
-        }
+        parsed = json.loads(output)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(output):
+        if char != "{":
+            continue
+        parsed = _try_decode_object(decoder, output[index:])
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _try_decode_object(decoder: json.JSONDecoder, text: str) -> dict[str, Any] | None:
+    try:
+        parsed, _ = decoder.raw_decode(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False)
 
 
 def validate_review(review: dict[str, Any]) -> dict[str, Any]:

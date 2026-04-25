@@ -9,7 +9,7 @@ description = "Rank C/C++ functions by fuzz harness suitability using explainabl
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{name = "fuzzrank"}]
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["Jinja2>=3.1", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
 tree-sitter = ["tree-sitter", "tree-sitter-languages"]
@@ -21,4 +21,4 @@ fuzzrank = "fuzzrank.cli:main"
 include = ["fuzzrank*"]
 
 [tool.setuptools.package-data]
-fuzzrank = ["rules/*.yml"]
+fuzzrank = ["prompts/*.j2", "rules/*.yml"]
