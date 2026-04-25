@@ -6,7 +6,12 @@ from pathlib import Path
 
 from .ctags_index import run_ctags
 from .features import extract_features, load_rules
-from .llm_review import DEFAULT_LLM_COMMAND, DEFAULT_PROMPT_TEMPLATE, review_ranks
+from .llm_review import (
+    DEFAULT_LLM_COMMAND,
+    DEFAULT_PROMPT_TEMPLATE,
+    review_ranks,
+    select_llm_review_ids,
+)
 from .merge import merge_ctags_functions
 from .model import (
     feature_from_dict,
@@ -138,6 +143,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
     write_jsonl(out / "ranked.jsonl", ranks)
 
     if args.llm_review:
+        review_ids = select_llm_review_ids(
+            functions=functions,
+            features=features,
+            ranks=ranks,
+            budget=args.llm_budget,
+        )
+        print(
+            f"llm review selected {len(review_ids)} candidates "
+            f"(budget {args.llm_budget}, command: {args.llm_command!r})",
+            file=sys.stderr,
+        )
         reviewed = review_ranks(
             repo=repo,
             functions=functions,
@@ -147,6 +163,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
             cache_dir=out / ".cache" / "llm_reviews",
             llm_command=args.llm_command,
             prompt_template=args.llm_prompt_template,
+        )
+        llm_used = sum(1 for rank in reviewed if rank.llm_used)
+        llm_blockers = sum(
+            1
+            for rank in reviewed
+            if any(concern.startswith("LLM blocker:") for concern in rank.concerns)
+        )
+        print(
+            f"llm review applied to {llm_used} candidates "
+            f"({llm_blockers} with blockers)",
+            file=sys.stderr,
         )
     else:
         reviewed = ranks
@@ -201,6 +228,17 @@ def cmd_review(args: argparse.Namespace) -> int:
     functions = [function_from_dict(obj) for obj in read_jsonl(args.functions)]
     features = [feature_from_dict(obj) for obj in read_jsonl(args.features)]
     ranks = [rank_from_dict(obj) for obj in read_jsonl(args.ranked)]
+    review_ids = select_llm_review_ids(
+        functions=functions,
+        features=features,
+        ranks=ranks,
+        budget=args.budget,
+    )
+    print(
+        f"llm review selected {len(review_ids)} candidates "
+        f"(budget {args.budget}, command: {args.llm_command!r})",
+        file=sys.stderr,
+    )
     reviewed = review_ranks(
         repo=args.repo.resolve(),
         functions=functions,
@@ -210,6 +248,16 @@ def cmd_review(args: argparse.Namespace) -> int:
         cache_dir=args.cache_dir,
         llm_command=args.llm_command,
         prompt_template=args.llm_prompt_template,
+    )
+    llm_used = sum(1 for rank in reviewed if rank.llm_used)
+    llm_blockers = sum(
+        1
+        for rank in reviewed
+        if any(concern.startswith("LLM blocker:") for concern in rank.concerns)
+    )
+    print(
+        f"llm review applied to {llm_used} candidates ({llm_blockers} with blockers)",
+        file=sys.stderr,
     )
     write_jsonl(args.out, reviewed)
     return 0

@@ -46,6 +46,35 @@ def should_llm_review(rank: RankResult, features: FeatureRecord, fn: FunctionRec
     return False
 
 
+def select_llm_review_ids(
+    functions: list[FunctionRecord],
+    features: list[FeatureRecord],
+    ranks: list[RankResult],
+    budget: int,
+) -> set[str]:
+    if budget <= 0:
+        return set()
+
+    fn_by_id = {fn.id: fn for fn in functions}
+    features_by_id = {feature.function_id: feature for feature in features}
+    ordered = sorted(ranks, key=lambda rank: rank.final_score, reverse=True)
+    review_ids: set[str] = set()
+
+    for rank in ordered:
+        fn = fn_by_id.get(rank.function_id)
+        feature = features_by_id.get(rank.function_id)
+        if not fn or not feature:
+            continue
+
+        if should_llm_review(rank, feature, fn):
+            review_ids.add(rank.function_id)
+
+        if len(review_ids) >= budget:
+            break
+
+    return review_ids
+
+
 def review_cache_key(
     evidence: dict[str, Any],
     prompt_version: str = PROMPT_VERSION,
@@ -82,18 +111,7 @@ def review_ranks(
     reviewed: list[RankResult] = []
     used = 0
     cache_dir.mkdir(parents=True, exist_ok=True)
-
-    ordered = sorted(ranks, key=lambda rank: rank.final_score, reverse=True)
-    review_ids: set[str] = set()
-    for rank in ordered:
-        fn = fn_by_id.get(rank.function_id)
-        feature = features_by_id.get(rank.function_id)
-        if not fn or not feature:
-            continue
-        if should_llm_review(rank, feature, fn):
-            review_ids.add(rank.function_id)
-        if len(review_ids) >= budget:
-            break
+    review_ids = select_llm_review_ids(functions, features, ranks, budget)
 
     for rank in ranks:
         fn = fn_by_id.get(rank.function_id)
@@ -109,7 +127,8 @@ def review_ranks(
 
         if review is None and llm_command and used < budget:
             review = invoke_llm_command(llm_command, evidence, template_text=template_text)
-            save_cached_review(cache_path, review)
+            if review.get("_cacheable", True):
+                save_cached_review(cache_path, review)
             used += 1
 
         if review is None:
@@ -182,24 +201,12 @@ def invoke_llm_command(
     try:
         prompt = build_review_prompt(evidence, template_text=template_text)
     except Exception as exc:
-        return {
-            "score_adjustment": 0,
-            "confidence": "low",
-            "harness_cost": "unknown",
-            "reasons": [],
-            "blockers": [str(exc)],
-        }
+        return error_review(str(exc))
 
     try:
         argv = build_command_argv(command, prompt)
     except ValueError as exc:
-        return {
-            "score_adjustment": 0,
-            "confidence": "low",
-            "harness_cost": "unknown",
-            "reasons": [],
-            "blockers": [str(exc)],
-        }
+        return error_review(str(exc))
     stdin_payload = None if "{prompt}" in command else json.dumps(evidence, sort_keys=True)
 
     try:
@@ -212,32 +219,25 @@ def invoke_llm_command(
             check=False,
         )
     except FileNotFoundError as exc:
-        return {
-            "score_adjustment": 0,
-            "confidence": "low",
-            "harness_cost": "unknown",
-            "reasons": [],
-            "blockers": [f"LLM command not found: {exc.filename}"],
-        }
+        return error_review(f"LLM command not found: {exc.filename}")
 
     if proc.returncode != 0:
-        return {
-            "score_adjustment": 0,
-            "confidence": "low",
-            "harness_cost": "unknown",
-            "reasons": [],
-            "blockers": [proc.stderr.strip() or f"LLM command exited with {proc.returncode}"],
-        }
+        return error_review(proc.stderr.strip() or f"LLM command exited with {proc.returncode}")
     review = parse_review_output(proc.stdout)
     if review is not None:
         return validate_review(review)
 
+    return error_review("LLM command returned no valid JSON object")
+
+
+def error_review(blocker: str) -> dict[str, Any]:
     return {
         "score_adjustment": 0,
         "confidence": "low",
         "harness_cost": "unknown",
         "reasons": [],
-        "blockers": ["LLM command returned no valid JSON object"],
+        "blockers": [blocker],
+        "_cacheable": False,
     }
 
 

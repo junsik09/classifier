@@ -14,10 +14,11 @@ from fuzzrank.llm_review import (
     invoke_llm_command,
     parse_review_output,
     review_ranks,
+    select_llm_review_ids,
 )
 from fuzzrank.model import RankResult
 from fuzzrank.ranker import rank_function
-from fuzzrank.ts_extract import extract_repo_functions
+from fuzzrank.ts_extract import extract_file_functions, extract_repo_functions
 
 
 FIXTURE_REPO = Path(__file__).parent / "fixtures"
@@ -162,6 +163,42 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         self.assertTrue(next(rank for rank in reviewed if rank.function_id == parse_frame.id).llm_used)
         self.assertFalse(next(rank for rank in reviewed if rank.function_id == helper.id).llm_used)
+
+    def test_custom_type_medium_score_is_selected_for_llm_review(self) -> None:
+        source = """
+        typedef struct GDBusConnection GDBusConnection;
+        typedef char gchar;
+        typedef struct GVariant GVariant;
+
+        int call_method(
+            GDBusConnection *conn,
+            const gchar *method,
+            GVariant *param,
+            GVariant **result
+        ) {
+            return strlen(method);
+        }
+        """
+        functions = extract_file_functions(source, "dbus.c", "c")
+        features = [extract_features(fn) for fn in functions]
+        ranks = [rank_function(fn, feature) for fn, feature in zip(functions, features)]
+
+        self.assertEqual(len(functions), 1)
+        self.assertTrue(features[0].has_custom_type_param)
+        self.assertEqual(ranks[0].final_score, 9)
+
+        selected = select_llm_review_ids(functions, features, ranks, budget=100)
+
+        self.assertEqual(selected, {functions[0].id})
+
+    def test_llm_command_error_is_not_cacheable(self) -> None:
+        review = invoke_llm_command(
+            "definitely_missing_fuzzrank_llm_command -y {prompt}",
+            {"target": {"name": "parse_frame"}},
+        )
+
+        self.assertFalse(review["_cacheable"])
+        self.assertIn("LLM command not found", review["blockers"][0])
 
     def test_parse_review_output_finds_embedded_json(self) -> None:
         parsed = parse_review_output('cline says:\n{"score_adjustment": -1}\n')
